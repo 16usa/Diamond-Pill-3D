@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -59,21 +59,224 @@ function makeSparkleTexture(): any {
   return new THREE.CanvasTexture(canvas);
 }
 
+function setupCanvas2DFallback(canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return () => {};
+
+  let frame = 0;
+  let pointerX = 0;
+  let pointerY = 0;
+  let targetX = 0;
+  let targetY = 0;
+
+  const onPointerMove = (event: PointerEvent) => {
+    targetX = (event.clientX / window.innerWidth - 0.5) * 2;
+    targetY = (event.clientY / window.innerHeight - 0.5) * 2;
+  };
+  window.addEventListener('pointermove', onPointerMove, { passive: true });
+
+  const resize = () => {
+    const pr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = window.innerWidth * pr;
+    canvas.height = window.innerHeight * pr;
+  };
+  window.addEventListener('resize', resize, { passive: true });
+  resize();
+
+  const clockStart = performance.now();
+
+  const sparkles = [
+    [-1.75, 0.65, 0.95],
+    [1.8, 0.65, 0.8],
+    [0.55, 1.18, 0.65],
+    [-0.65, -0.85, 0.72],
+    [1.15, -0.3, 0.95],
+  ];
+
+  const animate = () => {
+    const time = (performance.now() - clockStart) / 1000;
+    pointerX += (targetX - pointerX) * 0.035;
+    pointerY += (targetY - pointerY) * 0.035;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    const pr = Math.min(window.devicePixelRatio || 1, 2);
+    
+    const vw = width / pr;
+    const vh = height / pr;
+    const cx = vw / 2;
+    const cy = vh / 2;
+
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.save();
+    ctx.scale(pr, pr);
+
+    const unit = Math.min(vw, vh) / 10;
+
+    const pillX = cx + pointerX * unit * 1.5;
+    const pillY = cy + (0.12 + Math.sin(time * 0.85) * 0.12 - pointerY * 0.5) * unit * 2;
+
+    // Glow
+    ctx.save();
+    ctx.translate(cx, cy + 2.5 * unit);
+    ctx.scale(1, 0.4);
+    const glowOp = 0.62 + Math.sin(time * 0.9) * 0.1;
+    const gradGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, unit * 4);
+    gradGlow.addColorStop(0, `rgba(160,200,255,${0.15 * glowOp})`);
+    gradGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gradGlow;
+    ctx.fillRect(-unit * 4, -unit * 4, unit * 8, unit * 8);
+    ctx.restore();
+
+    // Pill
+    ctx.save();
+    ctx.translate(pillX, pillY);
+    const rotX = -0.22 + Math.sin(time * 0.38) * 0.06 + pointerY * 0.08;
+    const rotY = 0.35 + time * 0.22 + pointerX * 0.12;
+    const rotZ = -0.58 + Math.sin(time * 0.26) * 0.08;
+
+    ctx.rotate(rotZ);
+    ctx.scale(Math.cos(rotY), Math.cos(rotX));
+
+    const pWidth = 1.05 * unit * 2;
+    const pHeight = 2.35 * unit * 2;
+    const radius = pWidth / 2;
+
+    // Body
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(-pWidth/2, -pHeight/2, pWidth, pHeight, radius);
+    } else {
+      ctx.rect(-pWidth/2, -pHeight/2, pWidth, pHeight);
+    }
+    
+    // Iridescence
+    const grad = ctx.createLinearGradient(
+      -pWidth/2 * Math.cos(time * 0.5), 
+      -pHeight/2 * Math.sin(time * 0.5), 
+      pWidth/2 * Math.cos(time * 0.5), 
+      pHeight/2 * Math.sin(time * 0.5)
+    );
+    grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+    grad.addColorStop(0.2, 'rgba(160, 200, 255, 0.8)');
+    grad.addColorStop(0.4, 'rgba(255, 180, 220, 0.5)');
+    grad.addColorStop(0.6, 'rgba(180, 255, 220, 0.6)');
+    grad.addColorStop(0.8, 'rgba(220, 200, 255, 0.8)');
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0.95)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Core glow
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(-pWidth * 0.3, -pHeight * 0.4, pWidth * 0.6, pHeight * 0.8, pWidth * 0.3);
+    } else {
+      ctx.rect(-pWidth * 0.3, -pHeight * 0.4, pWidth * 0.6, pHeight * 0.8);
+    }
+    ctx.fillStyle = 'rgba(159, 223, 255, 0.2)';
+    ctx.fill();
+
+    // Seam ring
+    ctx.beginPath();
+    ctx.ellipse(0, 0, pWidth/2 + unit*0.05, unit * 0.15, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = unit * 0.05;
+    ctx.stroke();
+
+    // Facet lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = Math.max(1, unit * 0.02);
+    ctx.beginPath();
+    ctx.moveTo(-pWidth/3, -pHeight/2);
+    ctx.lineTo(-pWidth/3, pHeight/2);
+    ctx.moveTo(pWidth/3, -pHeight/2);
+    ctx.lineTo(pWidth/3, pHeight/2);
+    
+    ctx.moveTo(-pWidth/2, -pHeight/4);
+    ctx.lineTo(pWidth/2, -pHeight/4);
+    ctx.moveTo(-pWidth/2, pHeight/4);
+    ctx.lineTo(pWidth/2, pHeight/4);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Sparkles
+    sparkles.forEach((p, i) => {
+      ctx.save();
+      const sx = cx + (p[0] * unit) + pointerX * unit * 1.5;
+      const sy = cy - (p[1] * unit) + (0.12 + Math.sin(time * 0.85) * 0.12 - pointerY * 0.5) * unit * 2;
+      
+      const pulse = 0.65 + Math.sin(time * (2.2 + i * 0.18) + i) * 0.35;
+      const size = (0.28 + i * 0.025) * (0.88 + pulse * 0.26) * unit;
+      const op = Math.max(0.08, pulse);
+
+      ctx.translate(sx, sy);
+      ctx.globalAlpha = op;
+      
+      const spGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, size);
+      spGrad.addColorStop(0, 'rgba(255,255,255,1)');
+      spGrad.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+      spGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      
+      ctx.fillStyle = spGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Flare cross
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(-size * 1.5, -unit * 0.02, size * 3, Math.max(1, unit * 0.04));
+      ctx.fillRect(-unit * 0.02, -size * 1.5, Math.max(1, unit * 0.04), size * 3);
+
+      ctx.restore();
+    });
+
+    ctx.restore(); // end pr scale
+    frame = requestAnimationFrame(animate);
+  };
+  animate();
+
+  return () => {
+    cancelAnimationFrame(frame);
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('resize', resize);
+  };
+}
+
 function DiamondScene() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fallbackCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [webglFailed, setWebglFailed] = useState(false);
 
   useEffect(() => {
+    if (webglFailed) return undefined;
+
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
 
     document.title = 'Diamond Pill';
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-    });
+    let renderer: any;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        alpha: false,
+        powerPreference: 'high-performance',
+      });
+      
+      // Test context to ensure creation was successful
+      if (!renderer.getContext()) {
+        throw new Error("No WebGL Context");
+      }
+    } catch (e) {
+      console.warn("WebGL initialization failed, falling back to 2D", e);
+      setWebglFailed(true);
+      return undefined;
+    }
+
     const pixelRatio = () => Math.min(window.devicePixelRatio || 1, 2);
     renderer.setPixelRatio(pixelRatio());
     renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -305,11 +508,24 @@ function DiamondScene() {
       sparkles.forEach((sprite) => sprite.material.dispose());
       scene.clear();
     };
-  }, []);
+  }, [webglFailed]);
+
+  useEffect(() => {
+    if (!webglFailed) return undefined;
+    
+    const canvas = fallbackCanvasRef.current;
+    if (!canvas) return undefined;
+    
+    return setupCanvas2DFallback(canvas);
+  }, [webglFailed]);
 
   return (
     <main className="scene-shell" aria-label="Diamond Pill">
-      <canvas ref={canvasRef} className="scene-canvas" id="scene" />
+      {!webglFailed ? (
+        <canvas ref={canvasRef} className="scene-canvas" id="scene" />
+      ) : (
+        <canvas ref={fallbackCanvasRef} className="scene-canvas" id="scene-fallback" />
+      )}
     </main>
   );
 }
