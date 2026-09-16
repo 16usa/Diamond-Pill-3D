@@ -1,4 +1,5 @@
 run = "npm run dev -- --host 0.0.0.0 --port 5173 --strictPort"
+modules = ["nodejs-20"]
 
 [[ports]]
 localPort = 5173
